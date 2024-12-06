@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kalender 2025 met Firebase</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            text-align: center;
+        }
+        .calendar {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 5px;
+            max-width: 600px;
+            margin: 20px auto;
+        }
+        .day, .header {
+            padding: 10px;
+            border: 1px solid #ddd;
+            text-align: center;
+            position: relative;
+        }
+        .day {
+            background: #f9f9f9;
+        }
+        .day:hover {
+            background: #e0f7fa;
+            cursor: pointer;
+        }
+        .header {
+            font-weight: bold;
+            background: #4CAF50;
+            color: white;
+        }
+        .event-indicator {
+            width: 8px;
+            height: 8px;
+            background: green;
+            border-radius: 50%;
+            position: absolute;
+            top: 5px;
+            right: 5px;
+        }
+        #overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border: 1px solid #ddd;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+        }
+        .modal ul {
+            margin-bottom: 20px;
+        }
+        .modal button {
+            margin-top: 10px;
+        }
+    </style>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-app.js";
+        import { getDatabase, ref, push, get, child } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCYbyAyNdnnIpcVwj5Q-y-Ah-c4HGXaJRs",
+            authDomain: "chatje-kalender.firebaseapp.com",
+            databaseURL: "https://chatje-kalender-default-rtdb.firebaseio.com",
+            projectId: "chatje-kalender",
+            storageBucket: "chatje-kalender.firebasestorage.app",
+            messagingSenderId: "363332888889",
+            appId: "1:363332888889:web:9949d6936f7399b81d20e8"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const calendarContainer = document.getElementById('calendarContainer');
+            const currentMonthYear = document.getElementById('currentMonthYear');
+            const eventTitleInput = document.getElementById('eventTitle');
+            const eventEmailInput = document.getElementById('eventEmail');
+            const recurringCheckbox = document.getElementById('recurringCheckbox');
+            const saveEventButton = document.getElementById('saveEventButton');
+            const closeModalButton = document.getElementById('closeModalButton');
+            const prevMonthButton = document.getElementById('prevMonth');
+            const nextMonthButton = document.getElementById('nextMonth');
+            const eventModal = document.getElementById('eventModal');
+            const eventDetailsModal = document.getElementById('eventDetailsModal');
+            const eventDetailsContent = document.getElementById('eventDetailsContent');
+            const addNewEventButton = document.getElementById('addNewEventButton');
+            const overlay = document.getElementById('overlay');
+
+            const today = new Date();
+            let currentYear = today.getFullYear();
+            let currentMonth = today.getMonth();
+            let events = {};
+            let selectedDateKey = null;
+
+            const months = [
+                "Januari", "Februari", "Maart", "April", "Mei", "Juni",
+                "Juli", "Augustus", "September", "Oktober", "November", "December"
+            ];
+
+            function daysInMonth(year, month) {
+                return new Date(year, month + 1, 0).getDate();
+            }
+
+            async function loadEvents(year, month) {
+                const dbRef = ref(db);
+                const snapshot = await get(child(dbRef, "events"));
+                events = snapshot.exists() ? snapshot.val() : {};
+
+                const processedKeys = new Set();
+                Object.keys(events).forEach(dateKey => {
+                    Object.values(events[dateKey]).forEach(event => {
+                        if (event.isRecurring) {
+                            const [eventYear, eventMonth, eventDay] = dateKey.split('-').map(Number);
+                            const recurringDateKey = `${year}-${eventMonth}-${eventDay}`;
+                            if (
+                                !processedKeys.has(`${recurringDateKey}-${event.title}`) &&
+                                !(recurringDateKey === dateKey && eventYear === year)
+                            ) {
+                                if (!events[recurringDateKey]) {
+                                    events[recurringDateKey] = {};
+                                }
+                                events[recurringDateKey][`recurring-${event.title}`] = event;
+                                processedKeys.add(`${recurringDateKey}-${event.title}`);
+                            }
+                        }
+                    });
+                });
+
+                createCalendar(year, month);
+            }
+
+            function createCalendar(year, month) {
+                const days = daysInMonth(year, month);
+                calendarContainer.innerHTML = '<div class="calendar"></div>';
+                const calendar = calendarContainer.querySelector('.calendar');
+
+                const daysOfWeek = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
+                daysOfWeek.forEach(day => {
+                    const header = document.createElement('div');
+                    header.classList.add('header');
+                    header.textContent = day;
+                    calendar.appendChild(header);
+                });
+
+                const firstDay = new Date(year, month, 1).getDay();
+                const emptyDays = (firstDay + 6) % 7;
+                for (let i = 0; i < emptyDays; i++) {
+                    const emptyCell = document.createElement('div');
+                    emptyCell.classList.add('day');
+                    calendar.appendChild(emptyCell);
+                }
+
+                for (let i = 1; i <= days; i++) {
+                    const day = document.createElement('div');
+                    day.classList.add('day');
+                    day.textContent = i;
+
+                    const dateKey = `${year}-${month + 1}-${i}`;
+                    if (events[dateKey]) {
+                        const eventIndicator = document.createElement('div');
+                        eventIndicator.classList.add('event-indicator');
+                        day.appendChild(eventIndicator);
+
+                        day.addEventListener('click', () => showEventDetails(dateKey));
+                    } else {
+                        day.addEventListener('click', () => openEventModal(i, month, year));
+                    }
+
+                    calendar.appendChild(day);
+                }
+
+                currentMonthYear.textContent = `${months[month]} ${year}`;
+            }
+
+            function openEventModal(day, month, year) {
+                closeAllModals();
+                eventModal.style.display = 'block';
+                overlay.style.display = 'block';
+                eventTitleInput.value = '';
+                eventEmailInput.value = '';
+                recurringCheckbox.checked = false;
+                saveEventButton.onclick = () => saveEvent(day, month, year);
+            }
+
+            function closeEventModal() {
+                eventModal.style.display = 'none';
+                overlay.style.display = 'none';
+            }
+
+            function closeAllModals() {
+                eventModal.style.display = 'none';
+                eventDetailsModal.style.display = 'none';
+                overlay.style.display = 'none';
+            }
+
+            async function saveEvent(day, month, year) {
+                const eventTitle = eventTitleInput.value.trim();
+                const eventEmail = eventEmailInput.value.trim();
+                const isRecurring = recurringCheckbox.checked;
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+                if (!eventTitle || !emailRegex.test(eventEmail)) {
+                    alert('Voer een geldig e-mailadres en een titel in.');
+                    return;
+                }
+
+                const dateKey = `${year}-${month + 1}-${day}`;
+                const eventRef = ref(db, `events/${dateKey}`);
+                await push(eventRef, { title: eventTitle, email: eventEmail, isRecurring });
+
+                alert(`Agenda-item "${eventTitle}" toegevoegd!${isRecurring ? ' Dit event zal jaarlijks terugkeren.' : ''}`);
+                closeEventModal();
+                loadEvents(year, month);
+            }
+
+            function showEventDetails(dateKey) {
+                closeAllModals();
+                selectedDateKey = dateKey;
+                const dayEvents = events[dateKey];
+                if (dayEvents) {
+                    eventDetailsContent.innerHTML = `<strong>Event(s) op deze dag:</strong><ul>`;
+                    for (const key in dayEvents) {
+                        const event = dayEvents[key];
+                        if (event && event.title) {
+                            eventDetailsContent.innerHTML += `<li>${event.title} ${event.isRecurring ? '(Jaarlijks)' : ''}</li>`;
+                        }
+                    }
+                    eventDetailsContent.innerHTML += `</ul>`;
+                } else {
+                    eventDetailsContent.innerHTML = "Geen events voor deze dag.";
+                }
+                eventDetailsContent.innerHTML += `<button id="addNewEventButton">Nieuw Event Toevoegen</button>`;
+                document.getElementById('addNewEventButton').addEventListener('click', () => {
+                    const [year, month, day] = dateKey.split('-');
+                    openEventModal(parseInt(day), parseInt(month) - 1, parseInt(year));
+                });
+                eventDetailsModal.style.display = 'block';
+                overlay.style.display = 'block';
+            }
+
+            prevMonthButton.addEventListener('click', () => {
+                currentMonth--;
+                if (currentMonth < 0) {
+                    currentMonth = 11;
+                    currentYear--;
+                }
+                loadEvents(currentYear, currentMonth);
+            });
+
+            nextMonthButton.addEventListener('click', () => {
+                currentMonth++;
+                if (currentMonth > 11) {
+                    currentMonth = 0;
+                    currentYear++;
+                }
+                loadEvents(currentYear, currentMonth);
+            });
+
+            closeModalButton.addEventListener('click', closeEventModal);
+            overlay.addEventListener('click', closeAllModals);
+
+            loadEvents(currentYear, currentMonth);
+        });
+    </script>
+</head>
+<body>
+<h1>Kalender 2025 met Firebase</h1>
+<div class="month-navigation">
+    <button id="prevMonth">Vorige</button>
+    <span id="currentMonthYear"></span>
+    <button id="nextMonth">Volgende</button>
+</div>
+<div id="calendarContainer"></div>
+<div id="overlay"></div>
+<div id="eventModal" class="modal">
+    <h3>Voeg een agenda-item toe</h3>
+    <label for="eventTitle">Titel:</label>
+    <input type="text" id="eventTitle" placeholder="Agenda-item"><br><br>
+    <label for="eventEmail">E-mailadres:</label>
+    <input type="email" id="eventEmail" placeholder="Jouw e-mailadres"><br><br>
+    <label>
+        <input type="checkbox" id="recurringCheckbox"> Jaarlijks terugkerend (bijvoorbeeld een verjaardag)
+    </label><br><br>
+    <button id="saveEventButton">Opslaan</button>
+    <button id="closeModalButton">Sluiten</button>
+</div>
+<div id="eventDetailsModal" class="modal">
+    <div id="eventDetailsContent"></div>
+</div>
+</body>
+</html>
